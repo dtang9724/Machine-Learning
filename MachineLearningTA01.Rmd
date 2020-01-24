@@ -1,0 +1,221 @@
+---
+title: "TeamAssignment_1"
+author: "Dijia Tang, Chen Chen, Gangyan Liu"
+date: "11/10/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Load packeges
+```{r}
+library(zipcode)
+library(tidyverse)
+library(lubridate)
+```
+# Part 1
+
+## Preliminary processing
+Import food data and change the column names
+```{r}
+raw <- read.csv('https://s3.amazonaws.com/notredame.analytics.data/inspections.csv')
+food <- raw
+colnames(food) <- c('ID','DBAName','AKAName','License','FacilityType',
+                    'Risk','Address','City','State','Zip',
+                    'InspectionDate','InspectionType','Results','Violations',
+                    'Latitude','Longitude','Location')
+```
+Change the data type for each column
+```{r}
+food <- food %>% 
+  mutate(ID = as.integer(ID), DBAName = as.character(DBAName), AKAName = as.character(AKAName),
+         License = as.character(License),FacilityType = as.factor(FacilityType), Risk = as.factor(Risk),
+         Address = as.character(Address), City = as.factor(City), State = as.factor(State),
+         Zip = as.factor(Zip), InspectionType = as.factor(InspectionType),
+         Results = as.factor(Results), Violations = as.character(Violations), Latitude = as.double(Latitude),
+         Longitude = as.double(Longitude), Location = as.character(Location))
+food$InspectionDate = mdy(food$InspectionDate)
+food <- food %>% 
+  mutate(InspectionDate = as.Date(InspectionDate))
+```
+Output summary statistics
+```{r}
+summary(food)
+```
+# Part 2
+
+Change city names to their title forms
+```{r}
+food <- food %>% 
+  mutate(City = str_to_title(City))
+table(food$City)
+```
+Replace incorrect spellings of 'Chicago'
+```{r}
+food$City <- str_replace_all(food$City,'Cchicago|Chchicago|Chcicago|Chicagoi|Chicagochicago', "Chicago")
+```
+Change the city name from Brideview to Bridgeview and add the Zip code
+```{r}
+food[which(grepl('Brideview', food$City)), 'City'] <- 'Bridgeview'
+food <- food %>% 
+  mutate(Zip = as.character(Zip))
+food[which(grepl('Bridgeview', food$City)), 'Zip'] <- '60455'
+```
+Change Zip code 60627 to 60827
+```{r}
+food <- food %>% 
+  mutate(Zip = str_replace_all(Zip, '60627', '60827'))
+food <- food %>% 
+  mutate(Zip = as.factor(Zip))
+```
+Create a dataframe that contains missing values for City
+```{r}
+MissingCity <- food[which(is.na(food$City)),]
+```
+All missing cities have zipcodes. Use zipcode dataset to match those cities.
+```{r}
+data("zipcode")
+cityjoin <- merge(x = MissingCity, y = zipcode, by.x='Zip', by.y = 'zip')
+cityjoin <- cityjoin %>% 
+  select(-City,-latitude,-longitude,-state) 
+cityjoin = cityjoin[c(2,3,4,5,6,7,8,17,9,1,10,11,12,13,14,15,16)]
+names(cityjoin)[names(cityjoin) == 'city'] <- 'City'
+food <- food %>% 
+  filter(!is.na(City)) %>% 
+  rbind(cityjoin)
+```
+Examine missing cities
+```{r}
+table(is.na(food$City))
+```
+Create a dataframe that contains missing values for State
+```{r}
+MissingState <- food[which(is.na(food$State)),]
+```
+We can see that since the city is Chicago for all rows in MissingState, we should assign 'IL' to the State variable. Find the state name using indexation.
+```{r}
+food[which(is.na(food$State)),'State'] <- as.character(na.omit(unique(food[which(grepl(unique(MissingState$City), food$City)), 'State'])))
+table(is.na(food$State))
+```
+Create a dataframe that contains missing values for Zip
+```{r}
+MissingZip <- food[which(is.na(food$Zip)),]
+```
+There are two restaurants in MissingZip. Their licenses are '1166638' and '1515116'.
+
+**Strategy 1:** Let's explore if they appear elsewhere.
+```{r}
+store_1166638 <- food %>% 
+  filter(License == '1166638')
+store_1515116 <- food %>% 
+  filter(License == '1515116') 
+```
+We can't find these records elsewhere in the original dataset.
+
+**Strategy 2:** Try to match based on latitude and longitude in zipcode.
+```{r}
+ziptest <- zipcode %>% 
+  mutate(longitude = round(as.double(longitude),2),
+         latitude = round(as.double(latitude),2))
+zipselect <- ziptest %>% 
+  filter(longitude == -87.67 & latitude == 42.02)
+```
+We can't find the zipcodes based on latitude/longitude matching.
+
+**Strategy 3:** Find the Zipcode for MissingZip based on the closest house number and street name (hot-deck).
+```{r}
+m1 <- unique(food[grep('755\\d\\sN\\sPAULINA\\sST',food$Address),]$Zip)
+m2 <- food[grep('..\\d\\d\\sN\\sFREMONT\\sST',food$Address),]$Zip 
+m3 <- m2 %>% 
+  unique() %>% 
+  na.omit()
+```
+Assign the above zipcodes to the two licenses.
+```{r}
+food[which(grepl('1515116', food$License)), 'Zip'] = m1 
+food[which(grepl('1166638', food$License)), 'Zip'] = m3
+```
+Examine missing zipcodes
+```{r}
+table(which(is.na(food$Zip)))
+```
+
+Create a dataframe that contains missing values for Longitude
+```{r}
+MissingLong <- food[which(is.na(food$Longitude)),]
+```
+All MissingLongs have zipcodes and have neither latitude nor location. Find latitude, longitude, and location based on zip.
+```{r}
+longjoin <- merge(x = MissingLong, y = zipcode, by.x='Zip', by.y = 'zip')
+longjoin <- longjoin %>% 
+  select(-City,-Latitude,-Longitude,-state) 
+longjoin = longjoin[c(2,3,4,5,6,7,8,15,9,1,10,11,12,13,16,17,14)]
+names(longjoin)[names(longjoin) == 'city'] <- 'City'
+names(longjoin)[names(longjoin) == 'latitude'] <- 'Latitude'
+names(longjoin)[names(longjoin) == 'longitude'] <- 'Longitude'
+longjoin <- longjoin %>% 
+  mutate(Location = as.character((paste("(",Latitude,',',Longitude,")",sep = ''))))
+glimpse(longjoin)
+food <- food %>% 
+  filter(!is.na(Longitude)) %>% 
+  rbind(longjoin)
+table(is.na(food$Longitude))
+```
+Explore missing values for Latitude - 0 records
+```{r}
+food[which(is.na(food$Latitude)),]
+```
+Explore missing values for Longitude - 0 records
+```{r}
+food[which(is.na(food$Longitude)),]
+```
+Explore missing values for Location - 0 records
+```{r}
+food[which(is.na(food$Location)),]
+```
+## Output lists for unqiue values in City, State, and Zip, sorted alphabetically
+```{r}
+City <- as.list(unique(as.character(sort(food$City))))
+State <- as.list(unique(as.character(sort(food$State))))
+Zip <- as.list(unique(as.character(sort(food$Zip))))
+City
+State
+Zip
+```
+## Output ranges of latitude and longitude
+```{r}
+range(food$Latitude)
+range(food$Longitude)
+```
+# Part III
+
+Add ViolationCount and create a boxplot
+```{r}
+food <- food %>% 
+  rowwise() %>% 
+  mutate(ViolationCount = str_count(Violations,pattern = '\\|')+1) 
+food$ViolationCount <- replace_na(food$ViolationCount,0)
+
+plotdata <- food %>% 
+  select(Results, ViolationCount) %>% 
+  filter(Results == 'Pass' | Results == 'Fail' | Results == 'Pass w/ Conditions') 
+
+ggplot(plotdata)+
+  geom_boxplot(aes(x = Results, y = ViolationCount))
+```
+**Discussion on the boxplot**
+
+We can see that from a overall perspective, Pass corresponds to the fewest ViolationCount, while Fail corresponds to the highest. Pass w/ Conditions are somewhere in between.
+
+We can tell that whether the restaurant passes the inspection really depends on the number of violations it has.
+
+The fewer the violations, the more likely the restaurant is going to pass the inspection.
+
+## Final adjustments and examination of food
+```{r}
+food <- food %>% 
+  mutate(ViolationCount = as.integer(ViolationCount))
+summary(food)
+str(food)
+```
