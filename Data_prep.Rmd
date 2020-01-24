@@ -1,6 +1,6 @@
 ---
-title: "TeamAssignment_1"
-author: "Dijia Tang, Chen Chen, Gangyan Liu"
+title: "Data_prep"
+author: "Dijia Tang"
 date: "11/10/2019"
 output: html_document
 ---
